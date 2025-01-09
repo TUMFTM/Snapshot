@@ -1,0 +1,8 @@
+torch==2.2.0
+tqdm==4.66.1
+av2==0.2.1
+matplotlib==3.7.4
+pathlib==1.0.1
+pqdm==0.2.0
+pyyaml==6.0.1
+shapely==2.0.4

@@ -1,0 +1,74 @@
+program:
+  NAME: "Snapshot"
+  VERSION: "1.0"
+  DESCRIPTION: "Application-centered Motion Forecasting for Pedestrians"
+
+general:
+  LOGGING_LEVEL: 'ERROR' # INFO, ERROR, DEBUG, WARNING
+  NUM_CORES: -1 # If 1: Debug Mode / Single Core
+                # If >1: Use given Number
+                # If <1: Max Number Cores - given Number
+  WHICH_DATA_FOLDER: ["train","val"] # which folders to preprocess
+  CREATE_NEW_TEST_SET: False #true, false,
+  CREATE_TEST_SET_USING_ID_LIST: True #true, false,
+  SIZE_TEST_SET_IN_PERCENT: 10
+  SEED_TEST_SET: 2024
+
+path:
+  # Folder with the downloaded train and val dataset
+  DATA: "./dataset/Argoverse2/motion_forecasting/"
+
+  # Directory where the folder "pedestrian_benchmark" alongside the samples is created
+  BENCHMARK_DATA: "./dataset/Argoverse2/"
+
+  # Directory where the preprocessed data is stored
+  PREPROCESSED_DATA: "./dataset/Argoverse2/preprocessed/"
+  PREPROCESSED_DIR: "snapshot"
+
+  # Directory where the training results are stored
+  TRAINING: "./model/results/"
+
+  # Directory where the folder "Log" alongside the log-files is created
+  LOG: "./logs/"
+
+  # Directory where the folder "output" is created
+  VIS_OUTPUT: "./media/"
+
+
+samples:
+  DURATION_INTERVAL: 5
+  SAMPLE_LENGTH: 70
+  OBSERVATION_LENGTH: 10
+  DISTANCE_BASED_SELECTION: True
+
+
+vectorization:
+  RADIUS_DRIVABLE_AREA: 20
+  RADIUS_PED_CROSS: 20
+  RADIUS_LANE_SEG: 20
+  RADIUS_STATIC_OBST: 20
+  MAX_NUM_VECTORS: 200
+
+  _OBJECT_TYPE_DICT:
+    drivable_areas: -0.9
+    LaneType_VEHICLE: -0.3
+    LaneType_BIKE: -0.3
+    LaneType_BUS: -0.3
+    pedestrian_crossings: 0.3
+    static_obstacles: 0.9
+
+
+pytorch:
+  BATCH_SIZE: 128
+  NUM_WORKERS: 20
+  NUM_EPOCHS: 50
+
+  LEARNING_RATE: 0.0001
+  L2_WEIGHT_DECAY: 0.0005
+  LR_DECAY_FACTOR: 0.2
+  LR_DECAY_PATIENCE: 3
+
+
+model:
+  EMBED_DIM: 64
+  NUM_HEADS: 8
