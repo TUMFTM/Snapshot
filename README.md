@@ -6,7 +6,6 @@ This repository is the official implementation of [Snapshot](https://arxiv.org/a
 ## Table of Contents
 
 * [News](#news)
-* [ToDos](#todos)
 * [Getting Started](#getting-started)
 * [Training & Evaluation](#train_eval)
 * [Pretrained Models & Results](#models_results)
@@ -17,11 +16,6 @@ This repository is the official implementation of [Snapshot](https://arxiv.org/a
 
 **[2025/01/15]** Release of the initial version, containing all necessary scripts for data processing, model training and evaluation.
 
-## ToDos
-
-- [ ] Add images
-- [ ] Adjust plot script in media
-- [ ] Add citation once paper is published
 
 ## Getting Started
 
@@ -65,7 +59,7 @@ The weights for the pretrained models achieving the results reported in the pape
 
 ### Quantitative Results
 
-The results below are reported on the pedestrian benchmark which was generated based on the original [Argoverse2 Motion Forecasting Dataset](https://www.argoverse.org/av2.html).
+The results below are reported on the test split of the pedestrian benchmark which was generated based on the original [Argoverse2 Motion Forecasting Dataset](https://www.argoverse.org/av2.html).
 
 | Model | | CVM | SIMPL | Forecast-MAE | QCNet | Snapshot (2ts) | Snapshot (10ts) |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -84,6 +78,7 @@ Scenario 1 | Scnario 2
 ## Citation <a name="citation"></a>
 
 If you found this repository useful, please consider citing our work:
+```
 @inproceedings{uhlemann.2025snapshot,
       title={Snapshot: Towards Application-centered Models for Pedestrian Trajectory Prediction in Urban Traffic Environments}, 
       author={Nico Uhlemann and Yipeng Zhou and Tobias Mohr and Markus Lienkamp},
@@ -91,6 +86,7 @@ If you found this repository useful, please consider citing our work:
       publisher={IEEE},
       booktitle={2025 IEEE/CVF Winter Conference on Applications of Computer Vision Workshops}
 }
+```
 
 ## License <a name="license"></a>
 
