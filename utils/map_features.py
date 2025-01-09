@@ -134,7 +134,7 @@ def create_vector(polygon: Polygon, object_type, id: int) -> NDArrayFloat:
     return new_vectors
 
 
-def vectorize_map(avm: ArgoverseStaticMap, scenario: ArgoverseScenario, focal_track_id: str, logger, radius = None) -> NDArrayFloat:
+def vectorize_map(avm: ArgoverseStaticMap, scenario: ArgoverseScenario, focal_track_id: str, logger, radius = None, sorting = True) -> NDArrayFloat:
     """
     Vectorizes the map using Shapely library.
 
@@ -279,7 +279,8 @@ def vectorize_map(avm: ArgoverseStaticMap, scenario: ArgoverseScenario, focal_tr
     #         vectors.extend(new_vectors)
 
     # sort vectors by distance
-    vectors = sorted(vectors, key=shortest_distance_to_segment)
+    if sorting:
+        vectors = sorted(vectors, key=shortest_distance_to_segment)
     vectorized_map = np.array(vectors)
 
     # Normalize vectors
