@@ -15,7 +15,7 @@ from av2.datasets.motion_forecasting import scenario_serialization
 from av2.datasets.motion_forecasting.data_schema import (ArgoverseScenario, ObjectType, TrackCategory, Track)
 
 # global variables
-with open("config.yaml", "r") as file:
+with open(Path(__file__).parent.resolve() / "../config.yaml", "r") as file:
     _CONFIG = yaml.safe_load(file)
 
 _LOGGING_LEVEL = _CONFIG["general"]["LOGGING_LEVEL"]

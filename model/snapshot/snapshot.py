@@ -3,11 +3,13 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from typing import Optional
+from pathlib import Path
 import yaml
 
 # global variables
-with open("config.yaml", "r") as file:
+with open(Path(__file__).parent.resolve() / "../../config.yaml", "r") as file:
     _CONFIG = yaml.safe_load(file)
+
 
 def initialize_weights(module):
     if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):

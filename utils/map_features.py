@@ -6,11 +6,11 @@ from av2.map.drivable_area import DrivableArea
 from av2.datasets.motion_forecasting.data_schema import (
     ArgoverseScenario, Track, ObjectType)
 from av2.utils.typing import NDArrayFloat
-
 from shapely.geometry import Polygon, box, MultiPolygon
 from shapely.validation import make_valid
 from shapely.ops import unary_union
 from typing import Tuple, List
+from pathlib import Path
 import logging
 import yaml
 import numpy as np
@@ -20,7 +20,7 @@ import math
 from .extract_heading import obtain_exact_heading_speed_pos
 
 # global variables
-with open("config.yaml", "r") as file:
+with open(Path(__file__).parent.resolve() / "../config.yaml", "r") as file:
     _CONFIG = yaml.safe_load(file)
 
 _OBSERVATION_LENGTH = _CONFIG["samples"]["OBSERVATION_LENGTH"]

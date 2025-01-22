@@ -1,13 +1,13 @@
 # imports
-import yaml
 from pathlib import Path
 import torch
 from torch.utils.data import Dataset
+from pathlib import Path
+import yaml
 
 # global variables
-with open("config.yaml", "r") as file:
+with open(Path(__file__).parent.resolve() / "../../config.yaml", "r") as file:
     _CONFIG = yaml.safe_load(file)
-
 
 class SSDataset(Dataset):
     def __init__(self, mode):

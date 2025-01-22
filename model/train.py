@@ -21,7 +21,7 @@ from model.snapshot.snapshot import Snapshot
 from model.test import test_model
 
 # global variables
-with open("config.yaml", "r") as file:
+with open(Path(__file__).parent.resolve() / "../config.yaml", "r") as file:
     _CONFIG = yaml.safe_load(file)
 
 _SPLIT = _CONFIG["pytorch"]["BATCH_SIZE"] / _CONFIG["samples"]["OBSERVATION_LENGTH"]

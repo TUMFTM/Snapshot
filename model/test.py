@@ -17,7 +17,7 @@ from model.snapshot.dataloader import SSDataset
 from model.snapshot.snapshot import Snapshot
 
 # global variables
-with open("config.yaml", "r") as file:
+with open(Path(__file__).parent.resolve() / "../config.yaml", "r") as file:
     _CONFIG = yaml.safe_load(file)
 
 

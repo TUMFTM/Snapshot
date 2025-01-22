@@ -19,7 +19,7 @@ from utils.map_features import vectorize_map
 from utils.social_features import create_social_matrix_and_ground_truth
 
 # global variables
-with open("config.yaml", "r") as file:
+with open(Path(__file__).parent.resolve() / "../config.yaml", "r") as file:
     _CONFIG = yaml.safe_load(file)
 
 _LOGGING_LEVEL = _CONFIG["general"]["LOGGING_LEVEL"]

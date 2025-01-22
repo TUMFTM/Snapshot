@@ -3,7 +3,7 @@ from av2.datasets.motion_forecasting import scenario_serialization
 from av2.datasets.motion_forecasting.data_schema import (
     ArgoverseScenario, Track, ObjectType, TrackCategory)
 from av2.utils.typing import NDArrayFloat
-
+from pathlib import Path
 from typing import Tuple, List
 import yaml
 import numpy as np
@@ -23,7 +23,7 @@ _MOVER_TYPE_DICT = {
 }
 
 # global variables
-with open("config.yaml", "r") as file:
+with open(Path(__file__).parent.resolve() / "../config.yaml", "r") as file:
     _CONFIG = yaml.safe_load(file)
 
 _OBSERVATION_LENGTH = _CONFIG["samples"]["OBSERVATION_LENGTH"]
