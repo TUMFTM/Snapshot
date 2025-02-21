@@ -24,21 +24,25 @@ from model.test import test_model
 with open(Path(__file__).parent.resolve() / "../config.yaml", "r") as file:
     _CONFIG = yaml.safe_load(file)
 
-_SPLIT = _CONFIG["pytorch"]["BATCH_SIZE"] / _CONFIG["samples"]["OBSERVATION_LENGTH"]
-_RATIO = [int(_SPLIT), int(_SPLIT*2), int(_SPLIT*3), int(_SPLIT*4), int(_SPLIT*5), int(_SPLIT*6), int(_SPLIT*7), int(_SPLIT*8)]
-
-
 def mask_batch(tensor):
+    obs_length = _CONFIG["samples"]["OBSERVATION_LENGTH"]
+    batch_size = _CONFIG["pytorch"]["BATCH_SIZE"]
 
-    # batch gets newly sampled at each epoch, hence randomized timesteps selection not necessary 
-    tensor[:_RATIO[0], :, 5:] = 0.0
-    tensor[_RATIO[0]:_RATIO[1], :, 7:] = 0.0
-    tensor[_RATIO[1]:_RATIO[2], :, 9:] = 0.0
-    tensor[_RATIO[2]:_RATIO[3], :, 11:] = 0.0
-    tensor[_RATIO[3]:_RATIO[4], :, 13:] = 0.0
-    tensor[_RATIO[4]:_RATIO[5], :, 15:] = 0.0
-    tensor[_RATIO[5]:_RATIO[6], :, 17:] = 0.0
-    tensor[_RATIO[6]:_RATIO[7], :, 19:] = 0.0
+    # Number of mask groups, `min_obs` observations remain unmasked
+    min_obs = 2
+    num_masks = obs_length - min_obs
+
+    # Compute the batch split boundaries
+    _SPLIT = batch_size / (obs_length - 1)
+    ratio = [int(_SPLIT * i) for i in range(1, obs_length - min_obs + 1)]
+    
+    # Loop over each mask group
+    for i in range(num_masks):
+        threshold = 2 * (min_obs + i + 1) - 1 
+        if i == 0:
+            tensor[:ratio[0], :, threshold:] = 0.0
+        else:
+            tensor[ratio[i-1]:ratio[i], :, threshold:] = 0.0
 
     return tensor
 
