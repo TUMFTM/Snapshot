@@ -68,7 +68,7 @@ The results below are reported on the test split of the pedestrian benchmark whi
 
 ### Qualitative Results
 
-To visualize the trajectories for different scenes and different models, `/media/visualization.py` provides a basic implementation for the preprocessed data. Selected scenes generated with this script are displayed below, with the blue line representing the ground truth, yellow the prediction of Snapshot and green the CVM.
+To visualize the trajectories for different scenes and different models, `/media/visualization.py` provides a basic implementation for the preprocessed data. Selected scenes generated with this script are displayed below, with the blue line representing the ground truth and green the prediction of Snapshot.
 
 Scenario 1 | Scnario 2
  :-------------------------:|:-------------------------:
