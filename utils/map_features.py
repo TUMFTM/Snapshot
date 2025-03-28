@@ -6,15 +6,19 @@ from av2.map.drivable_area import DrivableArea
 from av2.datasets.motion_forecasting.data_schema import (
     ArgoverseScenario, Track, ObjectType)
 from av2.utils.typing import NDArrayFloat
-from shapely.geometry import Polygon, box, MultiPolygon
+
+
+from shapely.geometry import Polygon, box, MultiPolygon, LineString, GeometryCollection
 from shapely.validation import make_valid
 from shapely.ops import unary_union
-from typing import Tuple, List
-from pathlib import Path
+from shapely.affinity import translate, rotate
+from typing import Tuple, List, Dict
 import logging
 import yaml
 import numpy as np
 import math
+from pathlib import Path
+from matplotlib.path import Path as mplPath
 
 # local imports
 from .extract_heading import obtain_exact_heading_speed_pos
@@ -26,6 +30,8 @@ with open(Path(__file__).parent.resolve() / "../config.yaml", "r") as file:
 _OBSERVATION_LENGTH = _CONFIG["samples"]["OBSERVATION_LENGTH"]
 _OBJECT_TYPE_DICT = _CONFIG["vectorization"]["_OBJECT_TYPE_DICT"]
 _MAX_NUM_VECTORS = _CONFIG["vectorization"]["MAX_NUM_VECTORS"]
+_MAX_LENGTH_VECTORS = _CONFIG["vectorization"]["MAX_LENGTH_VECTORS"]
+_ROTATION = _CONFIG["samples"]["ROTATION"]
 
 
 def shortest_distance_to_segment(vector: NDArrayFloat) -> float:
@@ -106,6 +112,44 @@ def vectorize_static_obstacles(position_xy: NDArrayFloat, ped_pos: Tuple[float,f
 
     return new_vectors
 
+def interpolate_points(p1, p2, max_dist):
+    line = LineString([p1, p2])
+    dist = line.length
+    if dist <= max_dist:
+        return [p1, p2]
+    
+    num_segments = int(math.ceil(dist / max_dist))
+    points = [p1]
+    
+    for i in range(1, num_segments):
+        fraction = i / num_segments
+        interpolated_point = line.interpolate(fraction, normalized=True)
+        points.append((interpolated_point.x, interpolated_point.y))
+    
+    points.append(p2)
+    return points
+
+def process_polygon(polygon, max_dist):
+    coords = list(polygon.exterior.coords)
+    new_coords = []
+    
+    for i in range(len(coords) - 1):
+        p1 = coords[i]
+        p2 = coords[i + 1]
+        new_coords.extend(interpolate_points(p1, p2, max_dist))
+    
+    # Remove duplicates
+    result = []
+    for point in new_coords:
+        if not result or result[-1] != point:
+            result.append(point)
+    
+    # Ensure the polygon is closed
+    if result[0] != result[-1]:
+        result.append(result[0])
+    
+    return Polygon(result)
+
 def create_vector(polygon: Polygon, object_type, id: int) -> NDArrayFloat:
     """
     Create a vector representation of a polygon.
@@ -133,169 +177,216 @@ def create_vector(polygon: Polygon, object_type, id: int) -> NDArrayFloat:
 
     return new_vectors
 
+def process_vectorized_map(vectorized_map: NDArrayFloat, norm_position: NDArrayFloat, rotation_matrix: NDArrayFloat, apl_rotation: bool, apl_sorting: bool,  max_num_vectors: int) -> NDArrayFloat:
+    
+    vectorized_map[:, 2:] = vectorized_map[:, 2:] - np.tile(norm_position, (1, 2))
 
-def vectorize_map(avm: ArgoverseStaticMap, scenario: ArgoverseScenario, focal_track_id: str, logger, radius = None, sorting = True) -> NDArrayFloat:
-    """
-    Vectorizes the map using Shapely library.
+    # for visualization
+    if apl_sorting:
+        filtered_and_sorted_map = sorted(
+            ((segment, shortest_distance_to_segment(segment)) for segment in vectorized_map),
+            key=lambda x: x[1]
+        )
+        filtered_and_sorted_map = np.array([segment for segment, distance in filtered_and_sorted_map if not np.isnan(distance)])
+        short_sorted_trans = filtered_and_sorted_map[:max_num_vectors]
+    else:
+        short_sorted_trans = vectorized_map[:max_num_vectors]
+    
+    if short_sorted_trans.shape[0] == 0:
+        short_sorted_trans = np.zeros((1, 6)) 
+
+
+    if apl_rotation:
+        short_sorted_trans[:, 2:4] = np.dot(short_sorted_trans[:, 2:4], rotation_matrix)
+        short_sorted_trans[:, 4:6] = np.dot(short_sorted_trans[:, 4:6], rotation_matrix)
+
+    if len(short_sorted_trans) < max_num_vectors:
+        short_sorted_trans = np.pad(short_sorted_trans, ((0, max_num_vectors - short_sorted_trans.shape[0]), (0,0)), 'constant', constant_values=(0))
+
+    return short_sorted_trans
+
+def poly_list_to_vector_light(polygon_list: List[Polygon], start_id: int, polygon_type: str):
+    vectors = []
+    polygon_id = start_id
+    
+    if polygon_list:
+        for polygon in polygon_list:
+            new_vectors = create_vector(polygon, polygon_type, polygon_id)
+            if new_vectors is not None:
+                vectors.extend(new_vectors)
+                polygon_id += 1
+
+    return vectors, polygon_id
+
+def create_vectorized_map(map_poly_dict: Dict, ) -> NDArrayFloat:
+
+
+    map_poly_dict["driv_area"] = [polygon.simplify(0.1, preserve_topology=True) for polygon in map_poly_dict["driv_area"]]
+    #map_poly_dict["driv_area"] = [poly for geom in map_poly_dict["driv_area"] for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
+
+    map_poly_dict["lane_seg_bike"] = [polygon.simplify(0.1, preserve_topology=True) for polygon in map_poly_dict["lane_seg_bike"]]
+    #map_poly_dict["lane_seg_bike"] = [poly for geom in map_poly_dict["lane_seg_bike"] for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
+
+    map_poly_dict["lane_seg_bus"] = [polygon.simplify(0.1, preserve_topology=True) for polygon in map_poly_dict["lane_seg_bus"]]
+    #map_poly_dict["lane_seg_bus"] = [poly for geom in map_poly_dict["lane_seg_bus"] for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
+
+    map_poly_dict["lane_seg_vehicle"] = [polygon.simplify(0.1, preserve_topology=True) for polygon in map_poly_dict["lane_seg_vehicle"]]
+    #map_poly_dict["lane_seg_vehicle"] = [poly for geom in map_poly_dict["lane_seg_vehicle"] for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
+
+    for key in map_poly_dict.keys():
+        map_poly_dict[key] = [process_polygon(polygon, _MAX_LENGTH_VECTORS) for polygon in map_poly_dict[key]]
+
+
+
+    vectors = []
+    polygon_id = 1
+
+
+    # vectorize drivable_areas
+    new_vectors, polygon_id = poly_list_to_vector_light(map_poly_dict["driv_area"], polygon_id, "drivable_areas")
+    vectors.extend(new_vectors)
+
+    # vectorize pedestrian_crossings
+    new_vectors, polygon_id = poly_list_to_vector_light(map_poly_dict["ped_cross"], polygon_id, "pedestrian_crossings")
+    vectors.extend(new_vectors)
+
+    # # vectorize lane_segments BIKE
+    # new_vectors, polygon_id = poly_list_to_vector_light(map_poly_dict["lane_seg_bike"], polygon_id, "LaneType_BIKE")
+    # vectors.extend(new_vectors)
+
+    # # vectorize lane_segments BUS
+    # new_vectors, polygon_id = poly_list_to_vector_light(map_poly_dict["lane_seg_bus"], polygon_id, "LaneType_BUS")
+    # vectors.extend(new_vectors)
+
+    # # vectorize lane_segments VEHICLE
+    # new_vectors, polygon_id = poly_list_to_vector_light(map_poly_dict["lane_seg_vehicle"], polygon_id, "LaneType_VEHICLE")
+    # vectors.extend(new_vectors)
+    
+    
+    max_id = polygon_id - 1
+    vectorized_map = np.array(vectors)
+
+    # Normalize id
+    if max_id > 0:
+        vectorized_map[:, 1] = 2 * (vectorized_map[:, 1] / max_id) - 1
+
+    # avoid vectors being empty
+    if vectorized_map.shape[0] == 0:
+        vectorized_map = np.zeros((1, 6)) 
+
+    return vectorized_map
+
+def map_file_to_poly_dict(map_file: ArgoverseStaticMap):
+    drivable_areas: List[DrivableArea] = list(map_file.vector_drivable_areas.values())
+    pedestrian_crossings: List[PedestrianCrossing] = list(map_file.vector_pedestrian_crossings.values())
+    lane_segments: List[LaneSegment] = list(map_file.vector_lane_segments.values())
+
+    # vectorize drivable_areas
+    driv_area = [make_valid(Polygon(dav.xyz[:,:2])) for dav in drivable_areas]
+    driv_area = [sub_geom for geom in driv_area for sub_geom in 
+                 (geom.geoms if isinstance(geom, GeometryCollection) else [geom]) if isinstance(sub_geom, Polygon)]
+    
+    # controll if all polygons are counter clockwise
+    for i, polygon in enumerate(driv_area):
+        if not polygon.exterior.is_ccw:
+            driv_area[i] = Polygon(list(polygon.exterior.coords)[::-1])
+
+
+    # vectorize pedestrian_crossings
+    ped_cross = [make_valid(Polygon(polygon.polygon[:,:2])) for polygon in pedestrian_crossings]
+    ped_cross = [sub_geom for geom in ped_cross for sub_geom in 
+                 (geom.geoms if isinstance(geom, GeometryCollection) else [geom]) if isinstance(sub_geom, Polygon)]
+    for i, polygon in enumerate(ped_cross):
+        if not polygon.exterior.is_ccw:
+            ped_cross[i] = Polygon(list(polygon.exterior.coords)[::-1])
+
+
+
+    # vectorize lane_segments BIKE
+    lane_seg_bike = [make_valid(Polygon(polygon.polygon_boundary[:,:2])) for polygon in lane_segments if polygon.lane_type == LaneType.BIKE]
+    lane_seg_bike = [sub_geom for geom in lane_seg_bike for sub_geom in 
+                 (geom.geoms if isinstance(geom, GeometryCollection) else [geom]) if isinstance(sub_geom, Polygon)]
+    for i, polygon in enumerate(lane_seg_bike):
+        if not polygon.exterior.is_ccw:
+            lane_seg_bike[i] = Polygon(list(polygon.exterior.coords)[::-1])
+
+
+    # vectorize lane_segments BUS
+    lane_seg_bus = [make_valid(Polygon(polygon.polygon_boundary[:,:2])) for polygon in lane_segments if polygon.lane_type == LaneType.BUS]
+    lane_seg_bus = [sub_geom for geom in lane_seg_bus for sub_geom in 
+                 (geom.geoms if isinstance(geom, GeometryCollection) else [geom]) if isinstance(sub_geom, Polygon)]
+    for i, polygon in enumerate(lane_seg_bus):
+        if not polygon.exterior.is_ccw:
+            lane_seg_bus[i] = Polygon(list(polygon.exterior.coords)[::-1])
+
+
+
+    # vectorize lane_segments VEHICLE
+    lane_seg_vehicle = [make_valid(Polygon(polygon.polygon_boundary[:,:2])) for polygon in lane_segments if polygon.lane_type == LaneType.VEHICLE]
+    lane_seg_vehicle = [sub_geom for geom in lane_seg_vehicle for sub_geom in 
+                 (geom.geoms if isinstance(geom, GeometryCollection) else [geom]) if isinstance(sub_geom, Polygon)]
+    for i, polygon in enumerate(lane_seg_vehicle):
+        if not polygon.exterior.is_ccw:
+            lane_seg_vehicle[i] = Polygon(list(polygon.exterior.coords)[::-1])
+
+
+    map_poly_dict = {"driv_area": driv_area, "ped_cross": ped_cross, "lane_seg_bike": lane_seg_bike, "lane_seg_bus": lane_seg_bus, "lane_seg_vehicle": lane_seg_vehicle}
+    return map_poly_dict
+
+def vectorize_map(avm: ArgoverseStaticMap, scenario: ArgoverseScenario, focal_track_id: str, current_logger: logging.Logger, apl_rotation = _ROTATION, apl_sorting = True, max_num_vectors = _MAX_NUM_VECTORS):
+    '''
+    Vectorizes the map based on the focal pedestrian track
 
     Args:
-        avm (ArgoverseStaticMap): The ArgoverseStaticMap object containing map semantics.
-        scenario (ArgoverseScenario): The ArgoverseScenario object containing scenario information.
+        avm (ArgoverseStaticMap): The ArgoverseStaticMap object.
+        scenario (ArgoverseScenario): The ArgoverseScenario object.
         focal_track_id (str): The ID of the focal pedestrian track.
-
-    Global Variables:
-        _CONFIG (dict): Dictionary containing configuration parameters.
-        _OBSERVATION_LENGTH (int): The length of the observation sequence.
+        current_logger (logging.Logger): The logger object.
+        apl_rotation (bool): Whether to apply rotation.
 
     Returns:
-        NDArrayFloat: The vectorized map as a numpy array.
+        NDArrayFloat: The vectorized map.
+        np.ndarray: The map corners.
+        np.ndarray: The raster map.
 
     Raises:
         None
-    """
+    '''
+    
     # Get pedestrian track
     focal_ped_track = scenario.tracks[int(focal_track_id)]
-    focal_ped_position_end_obs = focal_ped_track.object_states[_OBSERVATION_LENGTH - 1].position
+    focal_ped_position_end_obs = np.array(focal_ped_track.object_states[_OBSERVATION_LENGTH - 1].position)
     focal_ped_heading_end_obs, _ = obtain_exact_heading_speed_pos(focal_ped_track.object_states[_OBSERVATION_LENGTH - 2], 
                                                         focal_ped_track.object_states[_OBSERVATION_LENGTH - 1])
     
     # rotate map to align with pedestrian heading, heading || North
-    # IMPORTANT: v = vR RIGHT SIDE MULTIPLICATION
+
     theta = (math.pi / 2) - focal_ped_heading_end_obs
-    # | x'| _ | x | |cos(theta) sin (theta) | 
-    # | y'| - | y | |-sin(theta) cos(theta) | 
     rotation_matrix = np.array([
         [np.cos(theta), np.sin(theta)],
         [-np.sin(theta), np.cos(theta)]
     ])
 
-    # extract polygons of map semantics
-    drivable_areas: List[DrivableArea] = list(avm.vector_drivable_areas.values())
-    pedestrian_crossings: List[PedestrianCrossing] = list(avm.vector_pedestrian_crossings.values())
-    lane_segments: List[LaneSegment] = list(avm.vector_lane_segments.values())
 
-    vectors = []
-    polygon_id = 1
+    try:
+        map_poly_dict = map_file_to_poly_dict(avm)
+    except Exception as e:
+        current_logger.error(f"Error in map_file_to_poly_dict: {e}")
 
-    # Define cut boxes for each object type
-    if radius is None:
-        cut_box_driv_area = box(-_CONFIG["vectorization"]["RADIUS_DRIVABLE_AREA"], -_CONFIG["vectorization"]["RADIUS_DRIVABLE_AREA"], _CONFIG["vectorization"]["RADIUS_DRIVABLE_AREA"], _CONFIG["vectorization"]["RADIUS_DRIVABLE_AREA"])
-        cut_box_ped_cros = box(-_CONFIG["vectorization"]["RADIUS_PED_CROSS"], -_CONFIG["vectorization"]["RADIUS_PED_CROSS"], _CONFIG["vectorization"]["RADIUS_PED_CROSS"], _CONFIG["vectorization"]["RADIUS_PED_CROSS"])
-        cut_box_lane_segm = box(-_CONFIG["vectorization"]["RADIUS_LANE_SEG"], -_CONFIG["vectorization"]["RADIUS_LANE_SEG"], _CONFIG["vectorization"]["RADIUS_LANE_SEG"], _CONFIG["vectorization"]["RADIUS_LANE_SEG"])
-        rad_static_obst = _CONFIG["vectorization"]["RADIUS_STATIC_OBST"]
-        radius_norm = max(_CONFIG["vectorization"]["RADIUS_DRIVABLE_AREA"], _CONFIG["vectorization"]["RADIUS_PED_CROSS"], _CONFIG["vectorization"]["RADIUS_LANE_SEG"])
-    else:
-        cut_box_driv_area = box(-radius, -radius, radius, radius)
-        cut_box_ped_cros = box(-radius, -radius, radius, radius)
-        cut_box_lane_segm = box(-radius, -radius, radius, radius)
-        rad_static_obst = radius
-        radius_norm = radius
+    try:
+        vectorized_map = create_vectorized_map(map_poly_dict)
+    except Exception as e:
+        current_logger.error(f"Error in create_vectorized_map: {e}")
+
+    try:
+        vectorized_map = process_vectorized_map(vectorized_map, focal_ped_position_end_obs, rotation_matrix, apl_rotation, apl_sorting, max_num_vectors)
+    except Exception as e:
+        current_logger.error(f"Error in process_vectorized_map: {e}")
 
 
-    # vectorize drivable_areas
-    clipped_polygon = [make_valid(Polygon(np.dot(dav.xyz[:,:2]-focal_ped_position_end_obs, rotation_matrix))).intersection(cut_box_driv_area) for dav in drivable_areas]
-    clipped_polygon = [poly for geom in clipped_polygon for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
-    clipped_polygon = unary_union(clipped_polygon)
-    clipped_polygon = [poly for geom in [clipped_polygon] for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
-    clipped_polygon = [poly for poly in clipped_polygon if not poly.is_empty and isinstance(poly, Polygon)]
+    # Normalisation
+    # norm = 1
+    # vectorized_map[:, 2:6] = vectorized_map[:, 2:6] / norm
 
-    if clipped_polygon:
-        total_points = sum(len(polygon.exterior.coords) for polygon in clipped_polygon)
-        simplified_polygon = clipped_polygon
-        tolerance = 0.1
-        while total_points > 95:
-                logging.debug(f"Reducing points in drivable areas at {avm.log_id} with tolerance {tolerance}")
-                simplified_polygon = [polygon.simplify(tolerance, preserve_topology=True) for polygon in clipped_polygon]
-                total_points = sum(len(polygon.exterior.coords) for polygon in simplified_polygon)
-                tolerance += 0.1
-
-        for polygon in simplified_polygon:
-            new_vectors = create_vector(polygon, "drivable_areas", polygon_id)
-            if new_vectors is not None:
-                vectors.extend(new_vectors)
-                polygon_id += 1
-
-
-
-    # vectorize pedestrian_crossings
-    clipped_polygon = [make_valid(Polygon(np.dot(polygon.polygon[:,:2]-focal_ped_position_end_obs, rotation_matrix))).intersection(cut_box_ped_cros) for polygon in pedestrian_crossings]
-    clipped_polygon = [poly for geom in clipped_polygon for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
-    clipped_polygon = [poly for poly in clipped_polygon if not poly.is_empty and isinstance(poly, Polygon)]
-    if clipped_polygon:
-        for polygon in clipped_polygon:
-            new_vectors = create_vector(polygon, "pedestrian_crossings", polygon_id)
-            if new_vectors is not None:
-                vectors.extend(new_vectors)
-                polygon_id += 1
-
-
-    # vectorize lane_segments BIKE
-    clipped_polygon = [make_valid(Polygon(np.dot(polygon.polygon_boundary[:,:2]-focal_ped_position_end_obs, rotation_matrix))).intersection(cut_box_lane_segm) for polygon in lane_segments if polygon.lane_type == LaneType.BIKE]
-    clipped_polygon = [poly for geom in clipped_polygon for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
-    clipped_polygon = [poly for poly in clipped_polygon if not poly.is_empty and isinstance(poly, Polygon)]
-    if clipped_polygon:
-        simplified_polygon = [polygon.simplify(0.1, preserve_topology=True) for polygon in clipped_polygon]
-        for polygon in simplified_polygon:
-            new_vectors = create_vector(polygon, "LaneType_BIKE", polygon_id)
-            if new_vectors is not None:
-                vectors.extend(new_vectors)
-                polygon_id += 1
-
-    # vectorize lane_segments BUS
-    clipped_polygon = [make_valid(Polygon(np.dot(polygon.polygon_boundary[:,:2]-focal_ped_position_end_obs, rotation_matrix))).intersection(cut_box_lane_segm) for polygon in lane_segments if polygon.lane_type == LaneType.BUS]
-    clipped_polygon = [poly for geom in clipped_polygon for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
-    clipped_polygon = [poly for poly in clipped_polygon if not poly.is_empty and isinstance(poly, Polygon)]
-    if clipped_polygon:
-        simplified_polygon = [polygon.simplify(0.3, preserve_topology=True) for polygon in clipped_polygon]
-        for polygon in simplified_polygon:
-            new_vectors = create_vector(polygon, "LaneType_BUS", polygon_id)
-            if new_vectors is not None:
-                vectors.extend(new_vectors)
-                polygon_id += 1
-
-    # vectorize lane_segments VEHICLE
-    clipped_polygon = [make_valid(Polygon(np.dot(polygon.polygon_boundary[:,:2]-focal_ped_position_end_obs, rotation_matrix))).intersection(cut_box_lane_segm) for polygon in lane_segments if polygon.lane_type == LaneType.VEHICLE]
-    clipped_polygon = [poly for geom in clipped_polygon for poly in (geom.geoms if isinstance(geom, MultiPolygon) else [geom])]
-    clipped_polygon = [poly for poly in clipped_polygon if not poly.is_empty and isinstance(poly, Polygon)]
-    if clipped_polygon:
-        simplified_polygon = [polygon.simplify(0.5, preserve_topology=True) for polygon in clipped_polygon]
-        for polygon in simplified_polygon:
-            new_vectors = create_vector(polygon, "LaneType_VEHICLE", polygon_id)
-            if new_vectors is not None:
-                vectors.extend(new_vectors)
-                polygon_id += 1
-
-
-
-    max_id = polygon_id
-
-    # vectorize static obstacles
-    # static_pos_array = [[track.object_states[0].position[0], track.object_states[0].position[1]] 
-    #                     for track in scenario.tracks if track.object_type 
-    #                     in {ObjectType.STATIC, ObjectType.BACKGROUND, ObjectType.CONSTRUCTION, ObjectType.RIDERLESS_BICYCLE, ObjectType.UNKNOWN}]
-    # if len(static_pos_array) > 0:
-    #     new_vectors = vectorize_static_obstacles(np.array(static_pos_array), focal_ped_position_end_obs, rotation_matrix, rad_static_obst)
-    #     if new_vectors is not None:
-    #         vectors.extend(new_vectors)
-
-    # sort vectors by distance
-    if sorting:
-        vectors = sorted(vectors, key=shortest_distance_to_segment)
-    vectorized_map = np.array(vectors)
-
-    # Normalize vectors
-    if vectorized_map.shape[0] > 0:
-        vectorized_map[:, 1] = 2 * (vectorized_map[:, 1] / max_id) - 1
-        vectorized_map[:, 2:6] = vectorized_map[:, 2:6] / radius_norm
-    else:
-        vectorized_map = np.zeros((1, 6)) # avoid vectors being empty
-        logger.debug(f"No vectors found in the map: {avm.log_id}")
-
-
-    if vectorized_map.shape[0] < _MAX_NUM_VECTORS:
-        vectorized_map = np.pad(vectorized_map, ((0, _MAX_NUM_VECTORS - vectorized_map.shape[0]), (0,0)), 'constant', constant_values=(0))
-    else:
-        logger.debug(f"Map matrix for scenario {scenario.scenario_id} has more than {str(_MAX_NUM_VECTORS)} vectors")
-        vectorized_map = vectorized_map[:_MAX_NUM_VECTORS]
 
     return vectorized_map

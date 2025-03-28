@@ -28,6 +28,9 @@ with open(Path(__file__).parent.resolve() / "../config.yaml", "r") as file:
 
 _OBSERVATION_LENGTH = _CONFIG["samples"]["OBSERVATION_LENGTH"]
 _DISTANCE_BASED_SELECTION = _CONFIG["samples"]["DISTANCE_BASED_SELECTION"]
+_ROTATION = _CONFIG["samples"]["ROTATION"]
+_MAX_RADIUS_AGENTS = _CONFIG["samples"]["MAX_RADIUS_AGENTS"]
+_MAX_NUM_AGENTS = _CONFIG["samples"]["MAX_NUM_AGENTS"]
 
 def _calculate_vtr_angle(vtr1: np.ndarray, vtr2: np.ndarray):
     cosTh = np.dot(vtr1, vtr2)
@@ -37,7 +40,7 @@ def _calculate_vtr_angle(vtr1: np.ndarray, vtr2: np.ndarray):
 
 
 def calculate_cognitive_metrics(pedestrian_position_t: NDArrayFloat, pedestrian_velocity_t: NDArrayFloat,
-    mover_position_t: NDArrayFloat, mover_velocity_t: NDArrayFloat) -> Tuple[float, float, float, float, float]:
+    mover_position_t: NDArrayFloat, mover_velocity_t: NDArrayFloat):
 
     vtr_p_rel = mover_position_t - pedestrian_position_t
     vtr_v_rel = mover_velocity_t - pedestrian_velocity_t
@@ -60,6 +63,7 @@ def calculate_cognitive_metrics(pedestrian_position_t: NDArrayFloat, pedestrian_
     return delta_alpha, ttca, dca, np.linalg.norm(vtr_v_rel), np.linalg.norm(vtr_p_rel)
 
 
+
 def calculate_collision_risk(delta_alpha: float, ttca: float, dca: float, s_rel: float, d_rel: float) -> float:
     
     if s_rel < 0.5:
@@ -74,7 +78,7 @@ def calculate_collision_risk(delta_alpha: float, ttca: float, dca: float, s_rel:
     return collision_risk
 
 
-def create_observation_and_ground_truth(focal_ped_track: Track, focal_ped_position: Tuple[float,float], rotation_matrix: NDArrayFloat) -> Tuple[NDArrayFloat, NDArrayFloat]:
+def create_observation_and_ground_truth(focal_ped_track: Track, focal_ped_position: Tuple[float,float], rotation_matrix: NDArrayFloat, apl_rotation: bool) -> Tuple[NDArrayFloat, NDArrayFloat]:
     """
     Creates the observation and ground truth for a given focal pedestrian track by performing the following steps:
     1. Extract the positions of the object states in the track.
@@ -99,16 +103,20 @@ def create_observation_and_ground_truth(focal_ped_track: Track, focal_ped_positi
         None
     """
     positions_xy =  np.array([object_state.position for object_state in focal_ped_track.object_states])
-    relative_pos_xy = positions_xy - focal_ped_position
-    relative_rot_pos_xy = np.dot(relative_pos_xy, rotation_matrix)
 
-    observation = relative_rot_pos_xy[:_OBSERVATION_LENGTH]
-    ground_truth = relative_rot_pos_xy[_OBSERVATION_LENGTH:]
+    relative_pos_xy = positions_xy - focal_ped_position
+    if apl_rotation:
+        relative_pos_xy = np.dot(relative_pos_xy, rotation_matrix)
+
+
+    observation = relative_pos_xy[:_OBSERVATION_LENGTH]
+    ground_truth = relative_pos_xy[_OBSERVATION_LENGTH:]
     
     return observation, ground_truth
 
 
-def create_mover_matrix(scenario: ArgoverseScenario, focal_track_id: str, focal_ped_pos_end_obs: Tuple[float,float], theta: float, rotation_matrix: NDArrayFloat) -> NDArrayFloat:
+
+def create_mover_matrix(scenario: ArgoverseScenario, focal_track_id: str, focal_ped_pos_end_obs: Tuple[float,float], theta: float, rotation_matrix: NDArrayFloat, apl_rotation: bool) -> NDArrayFloat:
     """
     Create a mover matrix based on the given scenario and parameters by performing the following steps:
     1. Extract all tracks that fit the criteria.
@@ -132,18 +140,10 @@ def create_mover_matrix(scenario: ArgoverseScenario, focal_track_id: str, focal_
         _MOVER_TYPE_DICT (dict): Dictionary mapping object types to their corresponding values.
 
     Returns:
-        NDArrayFloat: The mover matrix. Shape (N, 10) where N is the number of tracks. Each row contains the following columns:
+        NDArrayFloat: The mover matrix. Shape (N, 21) where N is the number of tracks. Each row contains the following columns:
             - type (float): Type of the mover. -0.6 for pedestrians, -0.2 for cyclists, 0.2 for motorcyclists, 0.6 for vehicles, 1.0 for buses.
             - x (float): x-coordinate of the relative position of the last observation state.
             - y (float): y-coordinate of the relative position of the last observation state.
-            - heading (float): Heading between the last two object states in radians/pi. Angle between positive x-axis and the direction of motion.
-            - speed (float): Speed between the last two object states.
-            - avg_heading (float): Heading between the first and last object states in radians/pi. Angle between positive x-axis and the direction of motion.
-            - avg_speed (float): Speed between the first and last object states.
-            - Placeholders for future features.
-            - Placeholders for future features.
-            - Placeholders for future features.
-
     Raises:
         None
 
@@ -163,10 +163,10 @@ def create_mover_matrix(scenario: ArgoverseScenario, focal_track_id: str, focal_
         # of each track with respect to the focal pedestrian and rotate them. Shape (N, 2)
         pos_end_obs_list = np.array([track.object_states[-1].position for track in track_list])
         rel_pos_end_obs_list = pos_end_obs_list - focal_ped_pos_end_obs
-        rot_rel_pos_end_obs_list = np.dot(rel_pos_end_obs_list, rotation_matrix)
 
-        # Filter the relative positions to only include the tracks that are in front of the focal pedestrian
-        filtered_indices = np.where(rot_rel_pos_end_obs_list[:,1] > 0)[0]
+
+        # Filter the relative positions to only include the tracks that are near the focal pedestrian 
+        filtered_indices = np.where(np.linalg.norm(rel_pos_end_obs_list, axis=1) < _MAX_RADIUS_AGENTS)[0]
 
         if len(filtered_indices) > 0:
             filtered_track_list = track_list[filtered_indices]
@@ -175,7 +175,9 @@ def create_mover_matrix(scenario: ArgoverseScenario, focal_track_id: str, focal_
             for i, track in np.ndenumerate(filtered_track_list):
                 track = np.array([state.position for state in track.object_states])
                 track = track if track.size <=10 else track[:10] # for AV track
-                rot_rel_pos_track = np.dot(track - focal_ped_pos_end_obs, rotation_matrix)
+                rot_rel_pos_track = track - focal_ped_pos_end_obs
+                if apl_rotation:
+                    rot_rel_pos_track = np.dot(rot_rel_pos_track, rotation_matrix)
                 rot_rel_pos_track = rot_rel_pos_track[::-1] # array starts with most recent observation
                 rot_rel_pos_track = rot_rel_pos_track.flatten()
                 rot_rel_pos_mover_tracks[i,:rot_rel_pos_track.size] = rot_rel_pos_track
@@ -188,6 +190,7 @@ def create_mover_matrix(scenario: ArgoverseScenario, focal_track_id: str, focal_
 
             if _DISTANCE_BASED_SELECTION:
                 sorted_mover_matrix = mover_matrix[np.argsort(np.linalg.norm(mover_matrix[:,1:3], axis=1))]
+                
             else:
                 risk_list = np.zeros([len(filtered_track_list),1])
                 focal_ped_track = scenario.tracks[int(focal_track_id)]
@@ -210,17 +213,19 @@ def create_mover_matrix(scenario: ArgoverseScenario, focal_track_id: str, focal_
                
                 sorted_mover_matrix = mover_matrix[np.argsort(risk_list[:,0])[::-1]]
 
+            short_sorted_mover_matrix = sorted_mover_matrix[:_MAX_NUM_AGENTS,:]
 
-            
-            short_sorted_mover_matrix = sorted_mover_matrix[:7,:]
+            if short_sorted_mover_matrix.shape[0] < _MAX_NUM_AGENTS:
+                    short_sorted_mover_matrix = np.pad(short_sorted_mover_matrix, ((0, _MAX_NUM_AGENTS-short_sorted_mover_matrix.shape[0]), (0,0)), 'constant', constant_values=(0))
 
             return short_sorted_mover_matrix
         else:
-            return np.zeros((7, 21))
+            return np.zeros((_MAX_NUM_AGENTS, 21))
 
 
 
-def create_social_matrix_and_ground_truth(scenario: ArgoverseScenario, focal_track_id: str) -> Tuple[NDArrayFloat, NDArrayFloat]:
+
+def create_social_matrix_and_ground_truth(scenario: ArgoverseScenario, focal_track_id: str, apl_rotation = _ROTATION):
     """
     Creates a social matrix and ground truth for a given scenario and focal track by performing the following steps:
     1. Extract the focal pedestrian track.
@@ -250,8 +255,9 @@ def create_social_matrix_and_ground_truth(scenario: ArgoverseScenario, focal_tra
     """
     focal_ped_track = scenario.tracks[int(focal_track_id)]
     focal_ped_pos_end_obs = focal_ped_track.object_states[_OBSERVATION_LENGTH - 1].position
-    focal_ped_heading_end_obs, focal_ped_speed_end_obs = obtain_exact_heading_speed_pos(focal_ped_track.object_states[_OBSERVATION_LENGTH - 2], 
+    focal_ped_heading_end_obs, _ = obtain_exact_heading_speed_pos(focal_ped_track.object_states[_OBSERVATION_LENGTH - 2], 
                                                         focal_ped_track.object_states[_OBSERVATION_LENGTH - 1])
+    
 
     # rotate map to align with pedestrian heading, heading || North
     # IMPORTANT: v' = vR RIGHT SIDE MULTIPLICATION
@@ -263,13 +269,16 @@ def create_social_matrix_and_ground_truth(scenario: ArgoverseScenario, focal_tra
         [-np.sin(theta), np.cos(theta)]
     ])
 
-    observation, ground_truth = create_observation_and_ground_truth(focal_ped_track, focal_ped_pos_end_obs, rotation_matrix)
+    observation, ground_truth = create_observation_and_ground_truth(focal_ped_track, focal_ped_pos_end_obs, rotation_matrix, apl_rotation)
 
     # obtain the feature vector of the focal pedestrian
     focal_feature_vec = np.concatenate((np.array([_MOVER_TYPE_DICT['FOCAL_PEDESTRIAN']]), observation[::-1].flatten()))
 
-    mover_matrix = create_mover_matrix(scenario, focal_track_id, focal_ped_pos_end_obs, theta, rotation_matrix)
+    mover_matrix = create_mover_matrix(scenario, focal_track_id, focal_ped_pos_end_obs, theta, rotation_matrix, apl_rotation)
 
     social_matrix = np.vstack((focal_feature_vec, mover_matrix))
+
+    # norm = 1
+    # social_matrix[:,1:] = social_matrix[:,1:] / norm
 
     return social_matrix, ground_truth
